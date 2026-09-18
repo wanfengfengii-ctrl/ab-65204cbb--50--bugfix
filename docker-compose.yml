@@ -1,0 +1,46 @@
+# 不显式设置 name / image：项目名随检出目录、镜像名随项目名派生，
+# 避免多个检出或变体在同一 Docker 守护进程上验收时互相冲突。
+services:
+  api:
+    build: ./api
+    # 验收（verify 服务）只走内部网络，不依赖宿主端口；
+    # 宿主端口默认 ephemeral（0 = Docker 分配空闲端口），避免端口已被占用导致
+    # 清洁验收失败；本地开发可用 API_PORT 指定固定端口。
+    ports:
+      - "${API_PORT:-0}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  web:
+    build: ./web
+    ports:
+      - "${WEB_PORT:-0}:80"
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  # 一次性验收服务：跑完 pytest（API 网络验收 + Playwright 端到端）即退出
+  verify:
+    build: ./verify
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    environment:
+      API_BASE_URL: http://api:8000
+      WEB_BASE_URL: http://web
